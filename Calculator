@@ -1,0 +1,554 @@
+; Program 2 - RPN Calculator - CSC-323: Assembly Language Programming
+; Group 1:  Hailey Maimone - mai5013@calu.edu, Ricky Peddicord - ped8697@calu.edu, Kelli Huff - huf2203@calu.edu
+
+INCLUDE Irvine32.inc
+
+.data
+bufferSize EQU 41																							; vconstant value to represent buffer size
+byteCount DWORD ?																							; string to hold input buffer bytecount
+counter DWORD 0																								; variable for main loop flag
+isNeg DWORD 0																								; flag to hold 0 if a number is non-negative and 1 if it is negative
+number SDWORD ?																								; variable to hold number before pushing it to the stack
+stackSize EQU 8																								; variable to hold stack size
+stackIndex SDWORD -4																						; variable to hold stack index
+numStack SDWORD stackSize DUP(0)																			; array to act as our stack
+buffer BYTE bufferSize DUP(0)																				; array to act as input buffer
+null EQU 0																									; constant value to represent null character
+tab EQU 9																									; constant value to represent tab character
+invalid BYTE "Invalid operation", 0																			; string for invalid input
+isFull BYTE "The stack is full. Additional values cannot be added.", 0										; string for stack full message
+sEmpty BYTE "The stack is currently empty.", 0																; string for stack empty message
+badOp BYTE "Insufficient operand.", 0																		; string for insuccificent operand error
+promptMsg BYTE "Enter an operation: ", 0																	; string for input prompt
+exitString BYTE "Terminating program...", 0																	; sting for program exit
+remainderString BYTE "The remainder is: ", 0																; string for displaying remainder
+quotientString BYTE "Quotient: ", 0																			; string for displaying quotient
+menuString BYTE "---------------------------------------------------------------------", 10, 13				; string for displaying menu of program commands
+		   BYTE "The calculator can perform the following operations: ", 10, 13
+		   BYTE "+    addition", 10, 13
+		   BYTE "-    subtraction", 10, 13
+		   BYTE "*    multiplication", 10, 13
+		   BYTE "/    division", 10, 13
+		   BYTE "X    exchange the top two elements of the stack", 10, 13
+		   BYTE "N    negate the top element of the stack", 10, 13
+		   BYTE "U    Roll the stack up", 10, 13
+		   BYTE "D    Roll the stack down", 10, 13
+		   BYTE "V    View all active elements of the stack", 10, 13
+		   BYTE "C    clear the stack", 10, 13
+		   BYTE "Q    Quit program", 10, 13
+		   BYTE "---------------------------------------------------------------------", 10, 13, 0
+
+.code
+main PROC
+	call clearStack							; clear the stack
+	mov edx, OFFSET menuString				; move menu display string to edx
+	call WriteString						; display menu
+	call Crlf
+	loopstart:
+		mov ebx, 1							; move 1 to bbx
+		cmp ebx, counter					; check if ebx is equal to counter (main program loop condition)
+		jne mainloop						; if not, jump to mainloop
+		jmp endloop							; otherwise jump to end
+	mainloop:
+		mov byteCount, 0					; initialize bytecount to 0
+		mov buffer, 0						; intiailize buffer to 0
+		mov edx, OFFSET promptMsg			; move prompt string to edx
+		call WriteString					; display prompt
+		call Crlf
+		call DetectSpace					; process white space in input buffer
+		call CommandHandler					; process command handler
+		call Crlf
+		jmp loopstart						; loop
+	endloop:
+		call Crlf
+		mov edx, OFFSET exitString			; move string to edx for exit message
+		call WriteString					; display exit message
+		call Crlf
+
+main ENDP
+
+clearStack PROC
+	mov stackIndex, -4
+	ret
+clearStack ENDP
+
+DetectSpace PROC
+	mov edx, OFFSET buffer			; read command line
+	mov ecx, SIZEOF buffer
+	call ReadString
+	mov bytecount, eax				; keep byte count
+
+	mov edi, 0
+	Skip:
+		cmp edi, byteCount			; Initialize the index register to 0, let's use EDI
+		jge EndLoop					; Identify the loop and test for the end of line
+		mov al, buffer[edi]			; nothing in buffer to process
+		cmp al, null				; Get the character from the buffer for testing
+		je EndLoop					; Test if it is the NULL character
+		cmp al, ' '					; Test for a space
+		je NextChar					; skip the space
+		cmp al, tab					; Test for a TAB
+		jne EndSkip					; process the command
+	NextChar:
+		inc edi						; update index for next character
+		jmp Skip
+	EndLoop:
+		mov al, -1					; nothing in input buffer, identify by setting AL to -1
+	EndSkip:
+	ret
+DetectSpace ENDP
+
+CommandHandler PROC
+	Switch:
+		cmp al, -1					; test if we don't have anything to process
+		je EndCase					; jump to end
+	Case1:
+		cmp al, '-'					; test if the character is a '-'
+		jne CaseNum					; process next case
+		inc edi						; move to next location
+		cmp edi, byteCount			; test if within input string
+		jge CaseSub					; nothing after '-', it is subtraction
+		mov al, buffer[edi]			; get the next character
+		cmp al, null				; test for null
+		je CaseSub					; nothing after '-', it is subtraction
+		cmp al, '0'					; test for a digit
+		jl CaseSub					; not a digit, it is subtraction
+		cmp al, '9'					
+		jg CaseSub					; not a digit, it is subtraction
+		mov isNeg, 1
+		call numProcess				; process the negative number
+		mov eax, number				; move number to eax
+		call PushIt					; push it to stack
+		jc stackFull				; if carry flag was set, jump to show error
+		jmp EndCase					; jump to end
+	CaseSub:
+		call Subtract				; process subtraction
+		jmp EndCase					; jump to end
+	CaseNum:
+		cmp al, '0'					; check if number is less than 0
+		jl Case2					; if it is, jump
+		cmp al, '9'					; check if number is greater than 9
+		jg Case2					; if it is, jump
+		call numProcess				; process number
+		mov eax, number				; move number to eax
+		call PushIt					; push number to stack
+		jc stackFull				; if carry flag was set, jump to show error
+		jmp EndCase					; jump to end
+	Case2:
+		cmp al, '+'					; test if the character is a '+'
+		jne Case3					; process next case
+		call Addition				; process addition
+		jc stackFull				; if carry flag was set, jump to show error
+		jmp EndCase					; jump to end
+	Case3:
+		cmp al, '*'					; test if the character is an '*'
+		jne Case4					; process the next case
+		call Multiplication			; process multiplication
+		jc stackFull				; if carry flag was set, jump to show error
+		jmp EndCase					; jump to end
+	Case4:
+		cmp al, '/'					; test if the character is a '/'
+		jne Case5					; process next case
+		call Division				; process division
+		jc stackFull				; if carry flag was set, jump to show error
+		jmp EndCase					; jump to end
+	Case5:
+		and al, 11011111b			; convert character to uppercase
+		cmp al, 'Q'					; check if character is a 'Q' or 'q'
+		jne Case6					; process next case
+		inc counter					; increment counter to end main loop
+		jmp EndCase					; jump to end
+	Case6:
+		cmp al, 'X'					; check if character is a 'X' or 'x'
+		jne Case7					; process next case
+		call Exchange				; exchange top two elements of the stack
+		jmp EndCase					; jump to end
+	Case7:
+		cmp al, 'N'					; check if character is a 'N' or 'n'
+		jne Case8					; process next case
+		call negateNum				; negate top value of the stack
+		jmp EndCase					; jump to end
+	Case8:
+		cmp al, 'U'					; check if character is a 'U' or 'u'
+		jne Case9					; process next case
+		call RollUp					; roll the stack up
+		jmp EndCase					; jump to end
+	Case9:
+		cmp al, 'D'					; check if character is a 'D' or 'd'
+		jne Case10					; process next case
+		call RollDown				; roll the stack down
+		jmp EndCase					; jump to end
+	Case10:
+		cmp al, 'V'					; check if character is a 'V' or 'v'
+		jne Case11					; process next case
+		call viewStack				; view the stack
+		jmp EndCase					; jump to end
+	Case11:
+		cmp al, 'C'					; check if character is a 'C' or 'c'
+		jne Default					; process default case
+		call clearStack				; clear the stack
+		jmp EndCase					; jump to end
+	stackFull:
+		mov edx, OFFSET isFull		; move string to edx
+		call WriteString			; display error message
+		call Crlf
+		jmp EndCase					; jump to end
+	Default:
+		mov edx, OFFSET invalid		; move string to edx
+		call WriteString			; display error message
+		Call Crlf
+	EndCase:
+	ret								;return
+CommandHandler ENDP
+
+PushIt PROC
+	push esi						; save the esi register
+	cmp stackIndex, (stackSize - 1) * 4			; test if the stack is full
+	jge NoPush
+	add stackIndex, 4				; update the stack index
+	mov esi, stackIndex				; get the stack index
+	mov numStack[esi], eax			; put the value onto the stack
+	clc								; indicate success
+	jmp EndPush
+NoPush:
+	stc								; indicate the stack is full
+EndPush:
+	pop esi							; restore the register
+	ret
+PushIt ENDP
+
+PopIt PROC
+	push esi						; save the esi register
+	cmp stackIndex, 0				; test if the stack is empty
+	jl NoPop
+	mov esi, stackIndex				; get the stack index
+	mov eax, numStack[esi]			; extract the value from the stack
+	sub stackIndex, 4				; update the stack index
+	clc								; clear carry to show success
+	jmp EndPop
+NoPop:
+	stc								; set carry to show the stack is empty
+EndPop:
+	pop esi							; restore the register
+	ret								; return
+PopIt ENDP
+
+numProcess PROC
+	push eax						; save register
+	mov number, 0					; initalize number to 0
+	endOfLineTest:
+		cmp edi, byteCount			; test if within input string
+		jge EndProc					; if not, jump to end
+		mov al, buffer[edi]			; move character to al
+		cmp al, null				; check if character is null (End of line)
+		je EndProc					; if it is, jump to end
+	mainLoop:						; check to see if character is between a 0 and a 9
+		cmp al, '0'					; check if is a 0
+		jl EndProc					; if less than 0, jump to end
+		cmp al, '9'					; check if it is a 9
+		jg EndProc					; if greater than a 9, jump to end
+		and al, 0fh					; AND the character with 0fh to convert the character into a digit
+		cbw							; convert the character (now a byte) into a word
+		cwd							; convert the character (now a word) into a dword
+		movzx ecx, al				; mov and extend the digit into the ecx register
+		mov eax, number				; move number (earlier intialized to 0) to eax register
+		mov ebx, 10					; move 10 to ebx (for multiplying the digit by 10)
+		mul ebx						; multiply the digit by 10 (the result is stored in eax)
+		add eax, ecx				; add the value of our number variable to our digit
+		mov number, eax				; move the result to the number variable so it can be used on loop reentry
+		inc edi						; increment edi so we can move to the next character
+		jmp endOfLineTest			; loop
+	EndProc:
+		cmp isNeg, 1				; check if negative flag was triggered
+		je NegNum					; if it was, jump to NegNum
+		jmp TheEnd					; otherwise, jump to end
+	NegNum:
+		neg number					; negate the number
+	TheEnd:
+		mov isNeg, 0				; reset isNeg to 0 for other potential operations
+		pop eax						; restore the register
+		ret							; return
+numProcess ENDP
+
+
+
+negateNum PROC
+	push eax						; save the register
+	call PopIt						; pop the value
+	jc isEmpty						; if stack is empty, print error
+	neg eax							; negate value
+	call PushIt						; push the value
+	jc stackFull					; if stack is full, print error
+	call WriteInt					; display value
+	call Crlf
+	jmp EndProc						; jump to end
+	isEmpty:
+		;insufficient operand error
+		mov edx, OFFSET badOp		; move string to edx
+		call WriteString			; display error message
+		call Crlf
+		jmp EndProc					; jump to end
+	stackFull:
+		; stack is full msg
+		mov edx, OFFSET isFull		; move string to edx
+		call WriteString			; display error message
+		call Crlf
+	EndProc:
+		pop eax					; restore the register
+		ret						; return
+negateNum ENDP
+
+viewStack PROC
+	push esi					; save register
+	mov esi, stackIndex			; move stack index to esi (stack index register)
+	viewTest:					
+		cmp esi, 0				; check if stack index register is empty
+		jge viewMain			; if it's not, jump to main loop
+		jmp viewEnd				; if it is, jump to end
+	viewMain:
+		mov eax, numStack[esi]	; move value from stack to eax for display
+		call WriteInt			; display value
+		call Crlf
+		sub esi, 4				; decrement stack index register
+		jmp viewTest			; jump back to test condition
+	viewEnd:
+		pop esi					; restore register
+		ret						; return
+viewStack ENDP
+
+Addition PROC
+	push eax								; save the register
+	call PopIt								; call popit procedure
+	jc ErrorMsg								; jump to ErrorMsg if carry 
+	mov ebx, eax							; move value into ebx register
+	call PopIt								; call popit procedure
+	jc ErrorMsg								; jump to error message if carry 
+	add ebx, eax							; add eax to ebx register
+	mov eax, ebx							; move value in ebx to eax
+	call PushIt								; call pushit procedure
+	jc ErrorMsg2							; jump to ErrorMsg2 if carry 
+	call WriteInt							; call to print sum to screen after addition
+	call Crlf								; new line
+	jmp EndProc								; jump to EndProc
+	ErrorMsg:
+	; insufficent operand error message
+		mov edx, OFFSET badOp				; moves invalid string message to edx
+		call WriteString					; prints invalid string message to screen
+		call Crlf							; new line
+		jmp EndProc							; jumps to EndProc
+	ErrorMsg2:
+		mov edx, OFFSET isFull				; moves sFull string message to edx for printing if stack is full
+		call WriteString					; prints string
+		call Crlf							; new line
+	EndProc:
+		pop eax								; pops eax off stack
+		ret									; returns to previous point in program
+Addition ENDP
+
+Subtract PROC								; procedure to subtract top two values in stack
+	push eax								; saves register
+	call PopIt								; call popit procedure
+	jc ErrMsg								; jump to ErrMsg if carry 
+	mov ebx, eax							; move value into ebx register
+	call PopIt								; call to PopIt procedure
+	jc ErrMsg								; jump to ErrMsg if carry 
+	sub ebx, eax							; subtracts eax from ebx
+	mov eax, ebx							; moves the value to eax register
+	call PushIt								; call to PushIt to push the difference on to stack
+	jc ErrMsg2								; jump to ErrorMsg2 if carry 
+	call WriteInt							; call to print difference to screen
+	jmp EndProc								; jump to EndProc
+	ErrMsg:
+	; insufficent operand error message
+		mov edx, OFFSET badOp				; moves invalid message string to edx for printing
+		call WriteString					; prints to screen
+		call Crlf							; new line
+		jmp EndProc							; jump to EndProc
+	ErrMsg2:
+		mov edx, OFFSET isFull				; moves sFull string message to edx for printing if stack is full
+		call WriteString					; prints message to screen
+		call Crlf							; new line
+	EndProc:
+		pop eax								; pops eax value off stack
+		ret									; returns to previous point in program
+Subtract ENDP
+
+Multiplication PROC							; procedure to multiply top two values in stack
+	push eax								; saves register
+	call PopIt								; call to popit procedure
+	jc ErrMsg								; jump to ErrMsg if carry 
+	mov ebx, eax							; moves value in eax to ebx
+	call PopIt								; call to PopIt
+	jc ErrMsg								; jump to ErrMsg if carry 
+	imul ebx, eax							; multiples eax by ebx
+	mov eax, ebx							; moves value from multipication from the ebx register into eax
+	call PushIt								; call to PushIt procedure to push that value on stack
+	jc ErrMsg2								; jump to ErrMsg2 if carry 
+	call WriteInt							; prints value to screen
+	jmp EndProc								; jump to EndProc
+	ErrMsg:
+	; insufficent operand error message
+		mov edx, OFFSET badOp				; moves invalid message string to edx for printing
+		call WriteString					; message prints to screen
+		call Crlf							; new line
+		jmp EndProc							; jump to EndProc
+	ErrMsg2:
+		mov edx, OFFSET isFull				; moves sFull string message to edx for printing if stack is full
+		call WriteString					; message prints to screen
+		call Crlf							; new line
+	EndProc:
+		pop eax								; pops eax value off stack
+		ret									; returns to previous point in program
+Multiplication ENDP
+
+Division PROC								; procedure to divide top two values of stack
+	push eax								; saves register
+	call PopIt								; call to PopIt procedure to get first number
+	jc ErrMsg								; jump to ErrMsg if carry
+	mov ebx, eax							; moves value in eax into ebx register
+	call PopIt								; call to PopIt procedure to get second number
+	jc ErrMsg								; jump to ErrMsg if carry
+	cdq										; extends into edx register for division
+	idiv ebx								; divides values
+	call PushIt								; call to PushIt to push quotient onto stack
+	jc ErrMsg2								; jump to ErrMsg2 if carry
+	mov ecx, edx							; moves remainder in edx to ecx
+	mov edx, OFFSET quotientString			; moves quotientString message to edx for printing
+	call WriteString						; prints to screen
+	call WriteInt							; prints quotient value to screen
+	call Crlf								; new line
+	mov eax, ecx							; moves remainder in ecx to eax
+	mov edx, OFFSET remainderString			; moves remainderString to edx for printing
+	call WriteString						; prints message to screen
+	call WriteInt							; prints remainder to screen
+	call Crlf								; new line
+	jmp EndProc								; jumps to EndProc
+	ErrMsg:
+	; insufficent operand error message
+		mov edx, OFFSET badOp				; moves invalid message string to edx for printing
+		call WriteString					; prints string to screen
+		call Crlf							; new line
+		jmp EndProc							; jumps to EndProc
+	ErrMsg2:
+		mov edx, OFFSET isFull				; moves sFull string message to edx for printing if stack is full
+		call WriteString					; prints to screen
+		call Crlf							; new line
+	EndProc:
+		pop eax								; pops value off eax
+		ret									; returns to previous point in program
+Division ENDP
+
+RollDown PROC
+	push esi								; save register
+	mov esi, stackIndex						; get stack index and move to esi (stack index register)
+	cmp esi, 0								; check if stack index register is empty
+	jl LoopIt4								; if it is, jump to display error
+	LoopIt:			
+		cmp esi, 0							; check if stack index register is empty
+		jl LoopItP							; if it is, jump to next label
+		push numStack[esi]					; push stack value to system stack
+		sub esi, 4							; decrement stack index register
+		jmp LoopIt							; loop
+	LoopItP:
+		pop ebx								; pop system stack to ebx register
+	LoopIt2:
+		mov ecx, esi						; move stack index register to ecx
+		add ecx, 4							; add 4 to ecx
+		cmp ecx, stackIndex					; check if ecx (stack index register + 4) is equal to stack index
+		je LoopIt3							; if it is, jump
+		add esi, 4							; increment stack index register
+		pop numStack[esi]					; pop value off of system stack
+		mov eax, numStack[esi]				; move value to eax for display
+		call WriteInt						; display value
+		call Crlf
+		jmp LoopIt2							; loop
+	LoopIt3:
+		add esi, 4							; increment stack index register
+		mov numStack[esi], ebx				; move previously popped value back to the stack
+		mov eax, numStack[esi]				; move value to eax for display
+		call WriteInt						; display value
+		call Crlf
+		jmp EndProc							; jump to end
+	LoopIt4:
+		mov edx, OFFSET sEmpty				; move string to edx
+		call WriteString					; display message
+		call Crlf
+	EndProc:
+		pop esi								; restore register
+		ret									; return
+RollDown ENDP
+
+RollUp PROC
+	push esi								; save register
+	mov esi, stackIndex						; get stack index and move to esi (stack index register)
+	cmp esi, 0								; check if stack index register is empty
+	jl LoopIt4								; if it is, jump
+	mov eax, numStack[esi]					; move stack value to eax
+	sub esi, 4								; decrement stack index register
+	LoopIt:
+		cmp esi, 0							; check if stack index register is empty
+		jl LoopIt2							; if it is, jump
+		mov ebx, numStack[esi]				; move stack value to ebx
+		push ebx							; push value to the system stack
+		sub esi, 4							; decrement stack index register
+		jmp LoopIt							; loop
+	LoopIt2:
+		add esi, 4							; increment stack index register
+		mov numStack[esi], eax				; move value from eax back to stack
+		call WriteInt						; display value
+		call Crlf
+	LoopIt3:
+		cmp esi, stackIndex					; check if stack index register is equal to stack index
+		je EndProc							; if it is, jump to end of procedure
+		add esi, 4							; increment stack index register
+		pop ebx								; pop value from system stack
+		mov eax, ebx						; move value from ebx to eax for display
+		call WriteInt						; display value
+		call Crlf
+		mov numStack[esi], ebx				; move value from ebx to the stack
+		jmp LoopIt3							; loop
+	LoopIt4:
+		mov edx, OFFSET sEmpty				; move string to edx
+		call WriteString					; display message
+		call Crlf
+	EndProc:
+	pop esi									; restore register
+	ret										; return
+RollUp ENDP
+
+	
+Exchange PROC
+	push eax			; save register
+	call POPIT			; pop value off of stack
+	jc loop1			; if carry set, jump
+	mov edx, eax		; move value to edx register
+	call POPIT			; pop 2nd value off of stack
+	jc loop1			; if carry set, jump
+	mov ecx, eax		; store first value in ecx register
+	mov eax, edx		; move first value back to eax register
+	call PUSHIT			; push it to the stack
+	jc loop1			; if carry set, jump
+	call WriteInt		; display value
+	call Crlf
+	mov eax, ecx		; move 2nd value to eax
+	call PUSHIT			; push it to the stack
+	jc loop2			; if carry set, jump
+	call WriteInt		; display value
+	call Crlf
+	jmp endloop			; jump to end of procedure if no error
+	loop1: 
+	; insufficient operand error message
+		mov edx, OFFSET badOp		; move string to edx
+		call Writestring			; display message
+		call Crlf
+		jmp endloop					; jump to end of procedure
+	loop2:
+		mov edx, OFFSET isFull		; move string to edx
+		call WriteString			; display message
+		call Crlf
+	endloop:
+		pop eax			; restore register
+		ret				; return
+	Exchange ENDP
+
+END main
